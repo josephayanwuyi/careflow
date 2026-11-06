@@ -3,18 +3,27 @@
 - The hospital has `is_seed_data = true` and code `DEMO`.
 - All accounts use the reserved `example.test` email domain.
 - Patient names are obviously fictional.
+- Doctors get weekday 09:00-13:00 sessions so slots can be booked.
 """
 
 from __future__ import annotations
 
 import os
 import secrets
-from datetime import date
+from datetime import date, time
 
 from sqlalchemy import select
 
 from careflow.extensions import db
-from careflow.models import Department, DoctorProfile, Hospital, PatientProfile, StaffMembership, User
+from careflow.models import (
+    Department,
+    DoctorProfile,
+    DoctorScheduleTemplate,
+    Hospital,
+    PatientProfile,
+    StaffMembership,
+    User,
+)
 from careflow.models.base import utcnow
 from careflow.security.passwords import hash_password
 from careflow.services.patient_service import ensure_hospital_record
@@ -79,10 +88,20 @@ def seed_development_data() -> str | None:
                     StaffMembership.user_id == user.id, StaffMembership.hospital_id == hospital.id,
                     StaffMembership.role == role)):
                 db.session.add(StaffMembership(user_id=user.id, hospital_id=hospital.id, role=role))
-        if dept_name and not db.session.scalar(select(DoctorProfile.id).where(
-                DoctorProfile.user_id == user.id, DoctorProfile.hospital_id == hospital.id)):
-            db.session.add(DoctorProfile(user_id=user.id, hospital_id=hospital.id, department_id=depts[dept_name].id,
-                                         title=title, specialty=dept_name))
+        if dept_name:
+            doctor = db.session.scalar(select(DoctorProfile).where(
+                DoctorProfile.user_id == user.id, DoctorProfile.hospital_id == hospital.id))
+            if doctor is None:
+                doctor = DoctorProfile(user_id=user.id, hospital_id=hospital.id, department_id=depts[dept_name].id,
+                                       title=title, specialty=dept_name)
+                db.session.add(doctor)
+                db.session.flush()
+            # Weekday clinics, 09:00-13:00 local time in 15-minute slots.
+            if not db.session.scalar(select(DoctorScheduleTemplate.id).where(DoctorScheduleTemplate.doctor_id == doctor.id)):
+                for weekday in range(5):
+                    db.session.add(DoctorScheduleTemplate(
+                        hospital_id=hospital.id, doctor_id=doctor.id, weekday=weekday, start_time=time(9, 0),
+                        end_time=time(13, 0), slot_minutes=15, valid_from=date(2026, 1, 1)))
 
     for email, name, phone, dob in PATIENTS:
         user = get_or_create_user(email, name, phone)

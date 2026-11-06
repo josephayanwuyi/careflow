@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
@@ -46,7 +47,17 @@ class DoctorProfile(UUIDPrimaryKey, Timestamps, db.Model):
     is_accepting_appointments: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    user: Mapped[User] = relationship()
+    # Cached current availability (history in doctor_status_events). See services/availability_service.py.
+    current_status: Mapped[str] = mapped_column(String(32), nullable=False, default="off_duty",
+                                                server_default="off_duty")
+    current_status_source: Mapped[str | None] = mapped_column(String(16))
+    current_status_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expected_return_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status_note: Mapped[str | None] = mapped_column(String(300))
+    arrival_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    arrival_verified_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
     hospital: Mapped[Hospital] = relationship()
     department: Mapped[Department] = relationship(foreign_keys=[department_id], primaryjoin="DoctorProfile.department_id == Department.id", viewonly=True)
 

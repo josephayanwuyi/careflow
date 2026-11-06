@@ -10,7 +10,11 @@ $log = Join-Path $root "postgres.log"
 if (-not (Test-Path $pgCtl)) { throw "PostgreSQL not found at $pgCtl. See docs/local-setup.md." }
 
 switch ($Action) {
-    "start"  { & $pgCtl -D $data -l $log start -w }
+    "start"  {
+        & $pgCtl -D $data status *> $null
+        if ($LASTEXITCODE -eq 0) { Write-Output "PostgreSQL is already running."; exit 0 }
+        & $pgCtl -D $data -l $log start -w
+    }
     "stop"   { & $pgCtl -D $data stop -m fast }
     "status" { & $pgCtl -D $data status }
 }

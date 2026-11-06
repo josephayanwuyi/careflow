@@ -42,11 +42,20 @@ python -m venv .venv
 copy .env.example .env          # then fill in secrets and DB URLs
 .venv\Scripts\flask --app wsgi db upgrade
 .venv\Scripts\flask --app wsgi careflow seed-dev     # synthetic data only; prints the seed password
-.venv\Scripts\waitress-serve --listen=127.0.0.1:8000 wsgi:app
+.venv\Scripts\waitress-serve --threads=32 --listen=127.0.0.1:8000 wsgi:app
 ```
+
+Each connected live-update client (`/api/v1/stream`) holds one server thread, so give waitress enough `--threads`.
 
 - API docs: http://localhost:8000/api/docs (OpenAPI JSON: `/api/openapi.json`)
 - Health: `/health/live`, `/health/ready`
+
+### Scheduled jobs (production)
+
+| Command | Frequency | Purpose |
+|---|---|---|
+| `flask --app wsgi careflow expire-appointments` | every 5 minutes | Expire unreviewed requests and unanswered proposals |
+| `flask --app wsgi careflow close-past-queues` | nightly, after local midnight | Close earlier days' queues; unseen appointments become no-shows |
 
 ### Tests
 

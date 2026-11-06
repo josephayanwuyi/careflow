@@ -54,3 +54,54 @@ class StaffCreatedSchema(Schema):
     user_id = fields.UUID()
     email = fields.Str()
     roles = fields.List(fields.Str())
+
+
+class StaffItemSchema(Schema):
+    id = fields.Str()
+    full_name = fields.Str()
+    email = fields.Str()
+    phone = fields.Str(allow_none=True)
+    roles = fields.List(fields.Str())
+    department_name = fields.Str(allow_none=True)
+    title = fields.Str(allow_none=True)
+    created_at = fields.Str()
+
+
+class NotificationLogItemSchema(Schema):
+    id = fields.Str()
+    timestamp = fields.Str()
+    type = fields.Str()
+    title = fields.Str()
+    body = fields.Str()
+    channel = fields.Str()
+
+
+class NotificationReportSchema(Schema):
+    sms_sent = fields.Int()
+    email_sent = fields.Int()
+    push_sent = fields.Int()
+    items = fields.List(fields.Nested(NotificationLogItemSchema))
+
+
+class WalletLedgerItemSchema(Schema):
+    id = fields.Str()
+    timestamp = fields.Str()
+    type = fields.Str()
+    amount = fields.Int()
+    description = fields.Str()
+    balance_after = fields.Int()
+
+
+class WalletSchema(Schema):
+    hospital_id = fields.UUID()
+    wallet_tokens = fields.Int()
+    usd_value = fields.Float()
+    low_balance_threshold = fields.Int()
+    rates = fields.Dict()
+    ledger = fields.List(fields.Nested(WalletLedgerItemSchema))
+
+
+class WalletTopUpSchema(Schema):
+    tokens = fields.Int(required=True, validate=validate.Range(min=100, max=100000))
+    payment_method = fields.Str(load_default="card_verified")
+    description = fields.Str(load_default=None, allow_none=True)

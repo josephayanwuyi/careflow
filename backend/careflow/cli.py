@@ -92,6 +92,20 @@ def register_cli(app: Flask) -> None:
         if password:
             click.echo(f"Generated password for all seed accounts: {password}")
 
+    @group.command("expire-appointments")
+    def expire_appointments():
+        """Expire unreviewed requests and unanswered proposals whose time has passed. Run every few minutes."""
+        from careflow.services.appointment_service import expire_stale
+
+        click.echo(f"Expired {expire_stale()} appointment(s).")
+
+    @group.command("close-past-queues")
+    def close_past_queues():
+        """Close queues from previous days (unseen patients cancelled, appointments marked no-show). Run nightly."""
+        from careflow.services.queue_service import close_past_days
+
+        click.echo(f"Closed {close_past_days()} queue entr(y/ies).")
+
     @group.command("generate-secret")
     def generate_secret():
         """Print a random value suitable for SECRET_KEY / JWT_SECRET_KEY."""

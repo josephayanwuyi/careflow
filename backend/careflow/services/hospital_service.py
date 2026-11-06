@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import uuid
 
 from sqlalchemy import select
@@ -136,3 +137,98 @@ def create_staff(
                          target_id=user.id, details={"roles": sorted(roles)})
     db.session.commit()
     return user
+
+
+def list_staff(hospital_id: uuid.UUID) -> list[dict]:
+    get_hospital(hospital_id)
+    stmt = (
+        select(User, StaffMembership.role)
+        .join(StaffMembership, StaffMembership.user_id == User.id)
+        .where(StaffMembership.hospital_id == hospital_id, User.is_active.is_(True))
+        .order_by(User.full_name)
+    )
+    rows = db.session.execute(stmt).all()
+    by_user: dict[uuid.UUID, dict] = {}
+    for user, role in rows:
+        if user.id not in by_user:
+            doc_profile = db.session.scalar(
+                select(DoctorProfile).where(DoctorProfile.user_id == user.id, DoctorProfile.hospital_id == hospital_id)
+            )
+            dept_name = None
+            if doc_profile and doc_profile.department_id:
+                dept = db.session.get(Department, doc_profile.department_id)
+                dept_name = dept.name if dept else None
+
+            by_user[user.id] = {
+                "id": str(user.id),
+                "full_name": user.full_name,
+                "email": user.email,
+                "phone": user.phone,
+                "roles": [],
+                "department_name": dept_name,
+                "title": doc_profile.title if doc_profile else None,
+                "created_at": user.created_at.isoformat() if user.created_at else "",
+            }
+        by_user[user.id]["roles"].append(role)
+    return list(by_user.values())
+
+
+def get_wallet(hospital_id: uuid.UUID) -> dict:
+    hospital = get_hospital(hospital_id)
+    settings = dict(hospital.settings or {})
+    tokens = int(settings.get("wallet_tokens", 2500))
+    low_thresh = int(settings.get("low_balance_threshold", 200))
+    ledger = list(settings.get("ledger", []))
+    return {
+        "hospital_id": hospital.id,
+        "wallet_tokens": tokens,
+        "usd_value": round(tokens * 0.01, 2),
+        "low_balance_threshold": low_thresh,
+        "rates": {"sms_tokens": 5, "email_tokens": 1, "push_tokens": 0},
+        "ledger": ledger[-50:],
+    }
+
+
+def topup_wallet(
+    actor: Actor,
+    hospital_id: uuid.UUID,
+    *,
+    tokens: int,
+    payment_method: str = "card_verified",
+    description: str | None = None,
+) -> dict:
+    hospital = get_hospital(hospital_id)
+    require(actor, Perm.STAFF_MANAGE, hospital_id)
+    if tokens < 100:
+        raise ValidationFailed(details={"tokens": ["Minimum top-up is 100 tokens."]})
+
+    settings = dict(hospital.settings or {})
+    current_tokens = int(settings.get("wallet_tokens", 0))
+    new_balance = current_tokens + tokens
+    settings["wallet_tokens"] = new_balance
+
+    ledger = list(settings.get("ledger", []))
+    now = utcnow()
+    ledger_entry = {
+        "id": f"tx_topup_{int(now.timestamp())}_{secrets.token_hex(3)}",
+        "timestamp": now.isoformat(),
+        "type": "topup",
+        "amount": tokens,
+        "description": description or f"Token Top-Up via {payment_method}",
+        "balance_after": new_balance,
+    }
+    ledger.append(ledger_entry)
+    settings["ledger"] = ledger
+    hospital.settings = settings
+    db.session.add(hospital)
+
+    audit_service.record(
+        "hospital.wallet_topup",
+        actor=actor,
+        hospital_id=hospital_id,
+        target_type="hospital",
+        target_id=hospital.id,
+        details={"tokens_purchased": tokens, "new_balance": new_balance, "payment_method": payment_method},
+    )
+    db.session.commit()
+    return get_wallet(hospital_id)

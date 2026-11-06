@@ -31,6 +31,7 @@ class Perm:
     QUEUE_CONSULT = "queue.consult"
     AVAILABILITY_SELF = "availability.self"
     AVAILABILITY_VERIFY = "availability.verify"
+    SCHEDULES_MANAGE = "schedules.manage"
 
 
 ALL_PERMISSIONS = frozenset(v for k, v in vars(Perm).items() if not k.startswith("_"))
@@ -63,6 +64,8 @@ class Actor:
     # hospital_id -> set of active roles
     roles_by_hospital: dict[uuid.UUID, set[str]] = field(default_factory=dict)
     patient_id: uuid.UUID | None = None
+    # hospital_id -> this user's doctor profile id at that hospital
+    doctor_ids: dict[uuid.UUID, uuid.UUID] = field(default_factory=dict)
     _perm_cache: dict[uuid.UUID, frozenset[str]] = field(default_factory=dict, repr=False)
 
     @property
@@ -72,6 +75,9 @@ class Actor:
     @property
     def is_staff(self) -> bool:
         return bool(self.roles_by_hospital)
+
+    def is_doctor(self, doctor_id: uuid.UUID) -> bool:
+        return doctor_id in self.doctor_ids.values()
 
     def roles_in(self, hospital_id: uuid.UUID) -> set[str]:
         return self.roles_by_hospital.get(hospital_id, set())

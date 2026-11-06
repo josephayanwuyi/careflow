@@ -57,22 +57,32 @@ def update_my_profile(actor: Actor, *, full_name=_UNSET, phone=_UNSET, date_of_b
 # --- Hospital-scoped operations (staff) -----------------------------------------------
 
 
-def _next_patient_number(hospital_id: uuid.UUID) -> str:
-    """Allocate the next hospital patient number under a row lock (safe for concurrent registrations)."""
-    hospital = db.session.scalar(select(Hospital).where(Hospital.id == hospital_id).with_for_update())
-    number = f"{hospital.code}-{hospital.next_patient_number:06d}"
-    hospital.next_patient_number += 1
-    return number
+def _lock_hospital(hospital_id: uuid.UUID) -> Hospital:
+    """Lock the hospital row and re-read it from the database (not the session cache)."""
+    return db.session.scalar(select(Hospital).where(Hospital.id == hospital_id).with_for_update()
+                             .execution_options(populate_existing=True))
 
 
 def ensure_hospital_record(hospital_id: uuid.UUID, patient_id: uuid.UUID, created_by: uuid.UUID | None) -> HospitalPatientRecord:
-    """Return the patient's record at this hospital, creating it if needed. Caller commits."""
-    record = db.session.scalar(select(HospitalPatientRecord).where(
-        HospitalPatientRecord.hospital_id == hospital_id, HospitalPatientRecord.patient_id == patient_id))
+    """Return the patient's record at this hospital, creating it if needed. Caller commits.
+
+    The hospital row lock serialises creation, so concurrent calls neither duplicate the record
+    nor hand out the same patient number.
+    """
+    def existing():
+        return db.session.scalar(select(HospitalPatientRecord).where(
+            HospitalPatientRecord.hospital_id == hospital_id, HospitalPatientRecord.patient_id == patient_id))
+
+    record = existing()
+    if record is not None:
+        return record
+    hospital = _lock_hospital(hospital_id)
+    record = existing()  # re-check now that we hold the lock
     if record is None:
+        number = f"{hospital.code}-{hospital.next_patient_number:06d}"
+        hospital.next_patient_number += 1
         record = HospitalPatientRecord(hospital_id=hospital_id, patient_id=patient_id,
-                                       hospital_patient_number=_next_patient_number(hospital_id),
-                                       created_by_user_id=created_by)
+                                       hospital_patient_number=number, created_by_user_id=created_by)
         db.session.add(record)
         db.session.flush()
     return record
@@ -117,7 +127,7 @@ def register_walk_in(
 
     # Serialise registrations per hospital so two receptionists cannot both pass the
     # duplicate check for the same person at the same moment.
-    db.session.execute(select(Hospital.id).where(Hospital.id == hospital_id).with_for_update())
+    _lock_hospital(hospital_id)
     candidates = find_possible_duplicates(hospital_id, full_name=full_name, phone=phone, date_of_birth=date_of_birth)
     if candidates and not confirm_not_duplicate:
         raise Conflict(

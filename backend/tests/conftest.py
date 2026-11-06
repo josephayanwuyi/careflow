@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from dotenv import load_dotenv
@@ -17,10 +19,25 @@ from sqlalchemy import text
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 os.environ["APP_ENV"] = "testing"
+os.environ["RATELIMIT_ENABLED"] = "true"
+
+from argon2 import PasswordHasher  # noqa: E402
+
+import careflow.security.passwords as _passwords  # noqa: E402
+
+# Production-strength Argon2 makes the suite slow; tests only need a valid Argon2id hash.
+_passwords._hasher = PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1)
 
 from careflow import create_app  # noqa: E402
 from careflow.extensions import db, limiter  # noqa: E402
-from careflow.models import Department, DoctorProfile, Hospital, StaffMembership, User  # noqa: E402
+from careflow.models import (  # noqa: E402
+    Department,
+    DoctorProfile,
+    DoctorScheduleTemplate,
+    Hospital,
+    StaffMembership,
+    User,
+)
 from careflow.security.passwords import hash_password  # noqa: E402
 
 PASSWORD = "correct-horse-battery"
@@ -104,6 +121,57 @@ class Factory:
                 doctor_id = doc.id
             db.session.commit()
             return {"user_id": u.id, "email": email, "doctor_id": doctor_id}
+
+
+    def schedule(self, hospital_id: uuid.UUID, doctor_id: uuid.UUID, *, start: time = time(9, 0),
+                 end: time = time(12, 0), slot_minutes: int = 15, weekdays=range(7)) -> None:
+        """Give a doctor a session every day (by default) from a week ago, open-ended."""
+        with self.app.app_context():
+            for wd in weekdays:
+                db.session.add(DoctorScheduleTemplate(
+                    hospital_id=hospital_id, doctor_id=doctor_id, weekday=wd, start_time=start, end_time=end,
+                    slot_minutes=slot_minutes, valid_from=date.today() - timedelta(days=7)))
+            db.session.commit()
+
+    def approved_appointment(self, hospital_id: uuid.UUID, doctor_id: uuid.UUID, patient_id, *,
+                             start_at: datetime, minutes: int = 1) -> str:
+        """Insert an approved appointment directly (bypassing slot rules) for queue tests."""
+        from careflow.models import Appointment
+        from careflow.services.patient_service import ensure_hospital_record
+
+        with self.app.app_context():
+            doctor = db.session.get(DoctorProfile, doctor_id)
+            ensure_hospital_record(hospital_id, uuid.UUID(str(patient_id)), None)
+            appt = Appointment(hospital_id=hospital_id, department_id=doctor.department_id, doctor_id=doctor_id,
+                               patient_id=uuid.UUID(str(patient_id)), start_at=start_at,
+                               end_at=start_at + timedelta(minutes=minutes), status="approved", source="staff_booked")
+            db.session.add(appt)
+            db.session.commit()
+            return str(appt.id)
+
+    def set_settings(self, hospital_id: uuid.UUID, **settings) -> None:
+        with self.app.app_context():
+            h = db.session.get(Hospital, hospital_id)
+            h.settings = {**(h.settings or {}), **settings}
+            db.session.commit()
+
+    def clinic(self, code: str = "HOSA") -> dict:
+        """A hospital with one department, a scheduled doctor, a receptionist and an admin."""
+        hid = self.hospital(code)
+        dept = self.department(hid)
+        doctor = self.staff(hid, "doctor", department_id=dept)
+        self.schedule(hid, doctor["doctor_id"])
+        return {"hospital_id": hid, "department_id": dept, "doctor": doctor,
+                "receptionist": self.staff(hid, "receptionist"), "admin": self.staff(hid, "hospital_admin")}
+
+
+LAGOS = ZoneInfo("Africa/Lagos")
+
+
+def slot_time(days_ahead: int = 7, hour: int = 9, minute: int = 0) -> str:
+    """ISO start time of a slot in Africa/Lagos, `days_ahead` days from today."""
+    d = datetime.now(LAGOS).date() + timedelta(days=days_ahead)
+    return datetime.combine(d, time(hour, minute), tzinfo=LAGOS).isoformat()
 
 
 @pytest.fixture

@@ -40,7 +40,20 @@ def create_app(env: str | None = None, overrides: dict | None = None) -> Flask:
                       expose_headers=["X-Request-ID"], max_age=600)
     rest_api.init_app(app)
 
-    from careflow.api import audit, auth, health, hospitals, patients
+    from careflow.api import (
+        appointments,
+        audit,
+        auth,
+        availability,
+        health,
+        hospitals,
+        notifications,
+        patients,
+        queue,
+        reports,
+        scheduling,
+        stream,
+    )
 
     rest_api.register_blueprint(auth.blp)
     rest_api.register_blueprint(hospitals.blp)
@@ -48,7 +61,20 @@ def create_app(env: str | None = None, overrides: dict | None = None) -> Flask:
     rest_api.register_blueprint(patients.blp)
     rest_api.register_blueprint(patients.hospital_blp)
     rest_api.register_blueprint(audit.blp)
+    rest_api.register_blueprint(scheduling.blp)
+    rest_api.register_blueprint(scheduling.slots_blp)
+    rest_api.register_blueprint(appointments.blp)
+    rest_api.register_blueprint(appointments.hospital_blp)
+    rest_api.register_blueprint(notifications.blp)
+    rest_api.register_blueprint(queue.blp)
+    rest_api.register_blueprint(availability.blp)
+    rest_api.register_blueprint(reports.blp)
     app.register_blueprint(health.bp)
+    app.register_blueprint(stream.bp)  # plain blueprint: SSE is not described well by OpenAPI
+
+    from careflow.realtime import broker
+
+    broker.configure(app.config["SQLALCHEMY_DATABASE_URI"])
 
     _register_request_hooks(app)
     _register_error_handlers(app)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from careflow.errors import Conflict, Unauthenticated, ValidationFailed
 from careflow.extensions import db
-from careflow.models import AuthSession, PatientProfile, RefreshToken, User
+from careflow.models import AuthSession, Hospital, PatientProfile, RefreshToken, StaffMembership, User
 from careflow.models.base import utcnow
 from careflow.security.passwords import hash_password, needs_rehash, verify_password
 from careflow.services import audit_service
@@ -62,6 +63,92 @@ def register_patient(
         db.session.rollback()
         raise Conflict("An account with these details already exists.", code="account_exists") from None
     return user, patient
+
+
+def register_hospital_admin(
+    *,
+    hospital_name: str,
+    hospital_code: str,
+    hospital_slug: str | None = None,
+    timezone: str = "Africa/Lagos",
+    address: str | None = None,
+    admin_name: str,
+    admin_email: str,
+    admin_password: str,
+    phone: str | None = None,
+    starter_tokens: int = 2500,
+) -> tuple[Hospital, User]:
+    email = normalize_email(admin_email)
+    phone = normalize_phone(phone) if phone else None
+    code = hospital_code.strip().upper()
+    if not hospital_slug:
+        hospital_slug = re.sub(r"[^a-z0-9-]", "", code.lower())
+    else:
+        hospital_slug = hospital_slug.strip().lower()
+
+    if db.session.scalar(select(Hospital.id).where(Hospital.code == code)):
+        raise Conflict(f"A hospital with code '{code}' already exists.", code="hospital_code_taken")
+    if db.session.scalar(select(Hospital.id).where(Hospital.slug == hospital_slug)):
+        raise Conflict(f"A hospital with slug '{hospital_slug}' already exists.", code="hospital_slug_taken")
+    if db.session.scalar(select(User.id).where(User.email == email)):
+        raise Conflict("An account with this email already exists.", code="email_taken")
+
+    now = utcnow()
+    hospital = Hospital(
+        code=code,
+        name=hospital_name.strip(),
+        slug=hospital_slug,
+        timezone=timezone or "Africa/Lagos",
+        address=address.strip() if address else None,
+        settings={
+            "wallet_tokens": starter_tokens,
+            "low_balance_threshold": 200,
+            "ledger": [
+                {
+                    "id": f"tx_init_{int(now.timestamp())}",
+                    "timestamp": now.isoformat(),
+                    "type": "starter_credit",
+                    "amount": starter_tokens,
+                    "description": "Starter Communication Token Allocation",
+                    "balance_after": starter_tokens,
+                }
+            ],
+        },
+    )
+    db.session.add(hospital)
+    db.session.flush()
+
+    user = User(
+        email=email,
+        phone=phone,
+        full_name=admin_name.strip(),
+        password_hash=hash_password(admin_password),
+        password_changed_at=now,
+    )
+    db.session.add(user)
+    db.session.flush()
+
+    membership = StaffMembership(
+        user_id=user.id,
+        hospital_id=hospital.id,
+        role="hospital_admin",
+    )
+    db.session.add(membership)
+    db.session.flush()
+
+    audit_service.record(
+        "auth.hospital_admin_registered",
+        actor_user_id=user.id,
+        hospital_id=hospital.id,
+        target_type="hospital",
+        target_id=hospital.id,
+    )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        raise Conflict("An account or hospital with these details already exists.", code="registration_conflict") from None
+    return hospital, user
 
 
 def _issue_tokens(user: User, session: AuthSession) -> TokenPair:

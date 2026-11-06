@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from careflow.errors import Unauthenticated, error_response
 from careflow.extensions import db, jwt
-from careflow.models import AuthSession, PatientProfile, StaffMembership, User
+from careflow.models import AuthSession, DoctorProfile, PatientProfile, StaffMembership, User
 from careflow.models.base import utcnow
 from careflow.security.policy import Actor
 
@@ -53,7 +53,16 @@ def build_actor(user: User, session_id: uuid.UUID) -> Actor:
         roles.setdefault(hospital_id, set()).add(role)
 
     patient_id = db.session.scalar(select(PatientProfile.id).where(PatientProfile.user_id == user.id))
-    return Actor(user=user, session_id=session_id, roles_by_hospital=roles, patient_id=patient_id)
+    doctor_ids = {
+        hospital_id: doctor_id
+        for doctor_id, hospital_id in db.session.execute(
+            select(DoctorProfile.id, DoctorProfile.hospital_id).where(
+                DoctorProfile.user_id == user.id, DoctorProfile.is_active.is_(True))
+        )
+        if "doctor" in roles.get(hospital_id, set())
+    }
+    return Actor(user=user, session_id=session_id, roles_by_hospital=roles, patient_id=patient_id,
+                 doctor_ids=doctor_ids)
 
 
 def login_required(fn):

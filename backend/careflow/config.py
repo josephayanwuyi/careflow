@@ -43,7 +43,8 @@ def build_config(env: str | None = None) -> dict:
         "TESTING": env == "testing",
         "SECRET_KEY": secret_key,
         "SQLALCHEMY_DATABASE_URI": _require(db_url_var),
-        "SQLALCHEMY_ENGINE_OPTIONS": {"pool_pre_ping": True},
+        # Sessions run in UTC so every timestamp leaves the API as UTC regardless of server settings.
+        "SQLALCHEMY_ENGINE_OPTIONS": {"pool_pre_ping": True, "connect_args": {"options": "-c timezone=UTC"}},
         # Auth
         "JWT_SECRET_KEY": jwt_secret,
         "JWT_ACCESS_TOKEN_EXPIRES": timedelta(minutes=_int("ACCESS_TOKEN_MINUTES", 15)),
@@ -52,6 +53,8 @@ def build_config(env: str | None = None) -> dict:
         "SESSION_MAX_AGE": timedelta(hours=_int("SESSION_MAX_HOURS", 12)),
         "LOGIN_MAX_FAILURES": _int("LOGIN_MAX_FAILURES", 5),
         "LOGIN_LOCKOUT_MINUTES": _int("LOGIN_LOCKOUT_MINUTES", 15),
+        # Web refresh cookie: Secure (HTTPS-only) everywhere except local development over http.
+        "COOKIE_SECURE": os.environ.get("COOKIE_SECURE", "true" if env == "production" else "false").lower() == "true",
         # Rate limiting
         "RATELIMIT_ENABLED": os.environ.get("RATELIMIT_ENABLED", "true").lower() != "false",
         "RATELIMIT_STORAGE_URI": os.environ.get("RATELIMIT_STORAGE_URI", "memory://"),

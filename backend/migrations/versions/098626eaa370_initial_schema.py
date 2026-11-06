@@ -19,7 +19,7 @@ depends_on = None
 AUDIT_GUARD_FN = """
 CREATE OR REPLACE FUNCTION audit_events_reject_change() RETURNS trigger AS $$
 BEGIN
-    RAISE EXCEPTION 'audit_events is append-only (% rejected)', TG_OP
+    RAISE EXCEPTION '% is append-only (% rejected)', TG_TABLE_NAME, TG_OP
         USING ERRCODE = 'insufficient_privilege';
 END;
 $$ LANGUAGE plpgsql;

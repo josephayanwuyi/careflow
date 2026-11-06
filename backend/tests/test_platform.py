@@ -56,15 +56,27 @@ def test_cors_allows_only_configured_origins(client, app):
     assert "Access-Control-Allow-Origin" not in evil.headers
 
 
-def test_login_is_rate_limited(client):
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        statuses = [client.post("/api/v1/auth/login", json={"email": "x@example.test", "password": "wrong-password"}).status_code
-                    for _ in range(11)]
-        assert statuses[:10] == [401] * 10
-        assert statuses[10] == 429
-        resp = client.post("/api/v1/auth/login", json={"email": "x@example.test", "password": "wrong-password"})
-        assert resp.get_json()["error"]["code"] == "rate_limited"
-    finally:
+def test_login_is_rate_limited(client, app):
+    with app.app_context():
+        limiter.enabled = True
         limiter.reset()
+        try:
+            statuses = [client.post("/api/v1/auth/login", json={"email": "x@example.test", "password": "wrong-password"}).status_code
+                        for _ in range(11)]
+            assert statuses[:10] == [401] * 10
+            assert statuses[10] == 429
+            resp = client.post("/api/v1/auth/login", json={"email": "x@example.test", "password": "wrong-password"})
+            assert resp.get_json()["error"]["code"] == "rate_limited"
+        finally:
+            limiter.reset()
+
+
+def test_timestamps_are_returned_in_utc(client, factory):
+    from tests.conftest import auth_headers, register_patient, slot_time
+
+    clinic = factory.clinic()
+    p = register_patient(client)
+    appt = client.post("/api/v1/appointments", headers=auth_headers(client, p["email"]),
+                       json={"doctor_id": str(clinic["doctor"]["doctor_id"]), "start_at": slot_time()}).get_json()
+    for key in ("start_at", "end_at", "created_at"):
+        assert appt[key].endswith("+00:00"), (key, appt[key])

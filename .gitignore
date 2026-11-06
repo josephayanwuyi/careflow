@@ -19,3 +19,8 @@ node_modules/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Web build / test output
+web/dist/
+web/test-results/
+web/playwright-report/
